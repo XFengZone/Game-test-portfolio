@@ -2,10 +2,6 @@ from airtest.core.api import *
 from tools import WindowTools, assert_fps_near,measure_while
 import config
 import tools
-auto_setup(__file__, devices=[f"Windows:///?title_re={config.GAME_TITLE}.*"])
-
-#将窗口放入左上角，拥有反作弊系统的游戏不可用，需自行移动到左上角
-WindowTools.move_and_fix_window(config.GAME_TITLE, config.WINDOW_WIDTH,config.WINDOW_HEIGHT)
 
 class Test_setting():
 
