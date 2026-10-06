@@ -215,6 +215,86 @@ def assert_fps_near(target, tol_ratio=None, count=None):
     )
     print(f"[FPS] {target}帧档位 -> 中位数 {median}  样本 {samples}")
     return median, samples
+def start_fps_sampling(interval=0.15, max_samples=200):
+    """
+    在后台线程开始连续截图（只截图，不识别，所以很快）。
+
+    返回 (stop_event, sampler)，调用方在动作结束后调用 stop_event.set()，
+    再用 sampler["shots"] 取到截图列表。
+
+    为什么要开线程：截图是用例里"和游戏操作并行"的动作。如果先移动再截图，
+    只能测到静态场景的帧率；边移动边截图才能覆盖场景加载、资源流式加载
+    这些真正容易掉帧的时刻。
+    """
+    stop_event = threading.Event()
+    sampler = {"shots": [], "running": True}
+
+    def _loop():
+        shots = sampler["shots"]
+        while not stop_event.is_set() and len(shots) < max_samples:
+            try:
+                shots.append(G.DEVICE.snapshot())
+            except Exception as e:
+                print(f"[FPS] 截图失败(已跳过): {type(e).__name__}: {e}")
+            stop_event.wait(interval)      # 比 sleep 好：收到信号立刻醒
+        sampler["running"] = False
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+    sampler["thread"] = t
+    return stop_event, sampler
+
+
+def stop_fps_sampling(stop_event, sampler, timeout=5.0):
+    """
+    通知采样线程停止，等待它退出，返回截到的图列表。
+
+    join(timeout) 必须有：万一采样线程卡在原生截图里出不来，
+    主线程不能跟着一起挂死，否则整条用例会一直卡住直到超时。
+    """
+    stop_event.set()
+    t = sampler.get("thread")
+    if t is not None:
+        t.join(timeout=timeout)
+        if t.is_alive():
+            print(f"[FPS] 警告：采样线程在 {timeout}s 内未退出，已放弃等待")
+    return sampler["shots"]
+
+
+def measure_fps_during(action_fn=None, min_samples=5, interval=0.15):
+    """
+    在 action_fn 执行期间连续采样，返回 (中位数, 样本列表, 实际采样数)。
+
+    action_fn 为 None 时只采样不执行动作（用于静态对比）。
+    """
+    stop_event, sampler = start_fps_sampling(interval=interval)
+    try:
+        sleep(0.3)                 # 等采样线程真正开始
+        if action_fn:
+            action_fn()
+    finally:
+        shots = stop_fps_sampling(stop_event, sampler)
+
+    if len(shots) < min_samples:
+        raise ValueError(f"采样数不足：只截到 {len(shots)} 张（要求 ≥{min_samples}）")
+
+    values, failed = [], 0
+    for shot in shots:
+        try:
+            digits, _ = _recognize(_extract_digits_image(shot))
+            if digits:
+                values.append(int(digits))
+            else:
+                failed += 1
+        except ValueError:
+            failed += 1
+    if not values:
+        raise ValueError(f"FPS 采样全部失败：{len(shots)} 张截图无一识别成功")
+    if failed > len(shots) / 2:
+        raise ValueError(f"FPS 识别失败率过高：{failed}/{len(shots)}")
+
+    print(f"[FPS] 移动期间共截到 {len(shots)} 张，成功识别 {len(values)} 张")
+    return statistics.median(values), values, len(shots)
 # ══════════════════════════════════════════════════════════════════════
 # 音量验证
 # ══════════════════════════════════════════════════════════════════════
