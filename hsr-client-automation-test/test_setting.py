@@ -28,16 +28,25 @@ class Test_setting():
 
         WindowTools.return_from_setting_menu()
         #操控角色前后左右移动
+        def move_60():
         #向后移动0.75秒
-        WindowTools.press_and_hold("S",0.75)
-        #向前移动0.75秒
-        WindowTools.press_and_hold("W",0.75)
-        #向左移动0.75秒
-        WindowTools.press_and_hold("A", 0.75)
-        #向右移动0.75秒
-        WindowTools.press_and_hold("D", 0.75)
+            WindowTools.press_and_hold("S",0.75)
+            #向前移动0.75秒
+            WindowTools.press_and_hold("W",0.75)
+            #向左移动0.75秒
+            WindowTools.press_and_hold("A", 0.75)
+            #向右移动0.75秒
+            WindowTools.press_and_hold("D", 0.75)
+
+        median_60, samples_60, n60 = tools.measure_fps_during(move_60, interval=0.15)
+        print(f"[FPS] 60帧档位移动期间样本: {samples_60}")
+        print(f"[FPS] 60帧档位中位数: {median_60}")
         #验证60帧档位的实际帧率
-        assert_fps_near(60)
+        tol_60 = 60 * config.FPS_TOL_RATIO
+        assert abs(median_60 - 60) <= tol_60, (
+            f"60帧档位移动期间实测中位帧率 {median_60}，超出容差 ±{tol_60:.1f}\n"
+            f"    全部样本({len(samples_60)}个): {samples_60}"
+        )
 
         #切换至30帧，继续测试游戏帧数内表现
         WindowTools.press_and_hold("ESCAPE", 0)
@@ -48,12 +57,25 @@ class Test_setting():
         sleep(0.5)
         touch(Template("images/30fps_notclick.png",threshold=0.8))
         WindowTools.return_from_setting_menu()
-        WindowTools.press_and_hold("S", 0.75)
-        WindowTools.press_and_hold("W", 0.75)
-        WindowTools.press_and_hold("A", 0.75)
-        WindowTools.press_and_hold("D", 0.75)
+        def move_30():
+            WindowTools.press_and_hold("S", 0.75)
+            WindowTools.press_and_hold("W", 0.75)
+            WindowTools.press_and_hold("A", 0.75)
+            WindowTools.press_and_hold("D", 0.75)
+
+        median_30, samples_30, n_30 = tools.measure_fps_during(move_30, interval=0.15)
+        print(f"[FPS] 30帧档位移动期间样本: {samples_30}")
+        print(f"[FPS] 30帧档位中位数: {median_30}")
         #验证30帧档位的实际帧率
-        assert_fps_near(30)
+        tol_30 = 30 * config.FPS_TOL_RATIO
+        assert abs(median_30 - 30) <= tol_30, (
+            f"30帧档位【移动期间】实测中位帧率 {median_30}，超出容差 ±{tol_30:.1f}\n"
+            f"    全部样本({len(samples_30)}个): {samples_30}"
+        )
+        # ── 相对判据：档位切换必须产生明显差异 ──
+        assert median_60 > median_30 * 1.3, (
+            f"帧率档位切换未产生预期差异：60档={median_60}, 30档={median_30}"
+        )
 
     def test_change_voice(self):
         """
