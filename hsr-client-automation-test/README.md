@@ -34,6 +34,7 @@
 ├── tools.py               # 公共工具（窗口操作、帧率读取、音频测量）
 ├── test_setting.py        # 设置系统测试用例
 ├── images/                # 模板图片
+├── conftest.py               
 ├── requirements.txt
 └── README.md
 ```
