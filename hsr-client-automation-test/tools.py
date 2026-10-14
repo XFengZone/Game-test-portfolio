@@ -384,6 +384,13 @@ def assert_volume_trend(db_levels):
             f"  音量 {lv:>2} -> {db_levels[lv]:7.1f} dBFS"
             for lv in sorted(db_levels, key=lambda x: int(x))
         )
+        #系统音量检测
+        assert loud > config.VOLUME_MEASURABLE_DBFS, (
+            f"无法建立有效测量基线：音量10 档实测仅 {loud:.1f} dBFS，"
+            f"低于可测量下限 {config.VOLUME_MEASURABLE_DBFS}dBFS。\n"
+            f"    可能原因：系统播放音量过低或已静音 / 默认输出设备切换 —— "
+            f"请先确认系统音量正常后重跑"
+        )
         allure.attach(
             f"音量-响度曲线:\n{curve}\n\n"
             f"判据1 动态范围(0->10) ≥{config.VOLUME_MIN_DYNAMIC_RANGE_DB}dB : 实测 {gap:.1f}dB\n"
