@@ -1,10 +1,9 @@
 import win32gui
 
-import time
 from airtest.core.api import *
 import statistics
 import threading
-
+import allure
 import cv2
 import numpy as np
 
@@ -25,7 +24,7 @@ class WindowTools:
         try:
             win32gui.MoveWindow(hwnd, 0, 0, width, height, True)
             print(f"成功将游戏窗口固定到(0, 0)，大小: {width}x{height}")
-            time.sleep(1)  # 给窗口一点时间渲染
+            sleep(1)  # 给窗口一点时间渲染
             return True
         except Exception as e:
             print(f"移动窗口失败: {e}")
@@ -60,6 +59,16 @@ class WindowTools:
         WindowTools.press_and_hold("ESCAPE", 0)
         sleep(1.0)
     @staticmethod
+    def enter_to_dungeon():
+        sleep(1.0)
+        touch(Template("images/enter_01.png"))
+        sleep(1.5)
+        touch(Template("images/enter_02.png"))
+        sleep(1.5)
+        touch(Template("images/enter_03.png"))
+        sleep(3.0)
+
+    @staticmethod
     def set_volume(x_left: int, x_right: int, y: int, target_volume: int):
         """
         使用相对坐标设置音量
@@ -80,6 +89,60 @@ class WindowTools:
         touch((target_x, y))
         sleep(0.5)
 
+    # fixture中的后置函数
+    # ══════════════════════════════════════════════════════════════════════\
+    @staticmethod
+    def restore_baseline_settings():
+
+        WindowTools.enter_setting()
+
+        # 1) 帧率：非 60 才切
+        if exists(Template("images/30fps.png", threshold=0.9)):
+            print("[conftest] 帧率复位 -> 60")
+            touch(Template("images/30fps.png", threshold=0.8))
+            sleep(0.5)
+            touch(Template("images/60fps_notclick.png", threshold=0.8))
+            sleep(0.5)
+        else:
+            print("[conftest] 帧率已是基线 60")
+
+        touch(Template("images/voice_setting.png", threshold=0.8))
+
+        # 2)音量：拖回 10
+        if exists(Template("images/voice_check.png", threshold=0.8)):
+            WindowTools.set_volume(config.X_LEFT, config.X_RIGHT, config.Y,
+                                   config.BASELINE_VOLUME)
+            print(f"[conftest] 音量复位 -> {config.BASELINE_VOLUME}")
+        else:
+            print("[conftest] 音量设置页未打开，跳过音量复位")
+
+        WindowTools.return_from_setting_menu()
+
+    @staticmethod
+    def run_movement():
+        """固定移动轨迹，让测量在相同操作下进行"""
+        WindowTools.press_and_hold("S", 0.75)
+        WindowTools.press_and_hold("W", 0.75)
+        WindowTools.press_and_hold("A", 0.75)
+        WindowTools.press_and_hold("D", 0.75)
+
+    @staticmethod
+    def set_fps(target):
+        """
+        把帧率切到目标档位。
+        已经是目标档位时不做操作；否则先取消当前选中，再选中目标。
+        前置条件：调用时游戏处于主界面。
+        """
+        if target not in config.FPS_OPTION_TEMPLATE:
+            raise ValueError(f"未配置 {target} 帧档位的模板图，请补充 config.FPS_OPTION_TEMPLATE")
+
+        if exists(Template(config.FPS_SELECTED_TEMPLATE[target], threshold=0.9)):
+            print(f"[FPS] 已是 {target} 帧档位，跳过切换")
+            return
+        else:
+            touch((1358,344))
+            sleep(0.5)
+            touch(Template(config.FPS_OPTION_TEMPLATE[target],threshold=0.8))
 
 # ── OCR 单例：初始化要 4~5 秒，全进程只初始化一次 ──────────────────────
 _OCR_ENGINE = None
@@ -157,64 +220,6 @@ def _recognize(image):
     raw = "".join(str(t) for t in texts)
     return "".join(ch for ch in raw if ch.isdigit()), raw
 
-
-def read_fps(debug=False):
-    """读一次当前帧率。失败抛异常，不返回 None"""
-    digits, raw = _recognize(_extract_digits_image(G.DEVICE.snapshot(), debug=debug))
-    if not digits:
-        raise ValueError(f"FPS 识别失败: OCR 输出={raw!r}")
-    return int(digits)
-
-
-def sample_fps(count=None, interval=None):
-    """
-    连续采样帧率，返回 (中位数, 样本列表)。
-    先连续截图、再统一识别：截图是毫秒级、识别是0.6秒级，
-    分开做才能把采样间隔压到 0.15 秒，真实反映帧率波动。
-    """
-    count = count or config.FPS_SAMPLE_COUNT
-    interval = interval if interval is not None else config.FPS_SAMPLE_INTERVAL
-
-    shots = []
-    for i in range(count):
-        shots.append(G.DEVICE.snapshot())
-        if i < count - 1:
-            sleep(interval)
-
-    values, failed = [], 0
-    for shot in shots:
-        try:
-            digits, _ = _recognize(_extract_digits_image(shot))
-            if digits:
-                values.append(int(digits))
-            else:
-                failed += 1
-        except ValueError:
-            failed += 1
-
-    if not values:
-        raise ValueError(f"FPS 采样全部失败: {count} 张截图无一识别成功")
-    if failed > count / 2:
-        raise ValueError(f"FPS 采样失败率过高: {failed}/{count}，结果不可信")
-
-    return statistics.median(values), values
-
-def assert_fps_near(target, tol_ratio=None, count=None):
-    """
-    采样并断言实测帧率接近目标值。这是"测试"和"脚本"的分界线。
-
-    target   : 标称帧率，如 60 / 30
-    tol_ratio: 允许的相对偏差，默认取 config.FPS_TOL_RATIO (0.10)
-    """
-    tol_ratio = tol_ratio if tol_ratio is not None else config.FPS_TOL_RATIO
-    median, samples = sample_fps(count=count)
-    tol = target * tol_ratio
-    assert abs(median - target) <= tol, (
-        f"{target}帧档位实测中位帧率 {median}，超出容差 ±{tol:.1f}\n"
-        f"    全部样本: {samples}"
-    )
-    print(f"[FPS] {target}帧档位 -> 中位数 {median}  样本 {samples}")
-    return median, samples
 def start_fps_sampling(interval=0.15, max_samples=200):
     """
     在后台线程开始连续截图（只截图，不识别，所以很快）。
@@ -226,12 +231,12 @@ def start_fps_sampling(interval=0.15, max_samples=200):
     只能测到静态场景的帧率；边移动边截图才能覆盖场景加载、资源流式加载
     这些真正容易掉帧的时刻。
     """
-    stop_event = threading.Event()
+    stop_event = threading.Event()#造一个旗子
     sampler = {"shots": [], "running": True}
 
     def _loop():
         shots = sampler["shots"]
-        while not stop_event.is_set() and len(shots) < max_samples:
+        while not stop_event.is_set() and len(shots) < max_samples:#看旗子举没举起来，没举起来就截图放入列表
             try:
                 shots.append(G.DEVICE.snapshot())
             except Exception as e:
@@ -239,8 +244,8 @@ def start_fps_sampling(interval=0.15, max_samples=200):
             stop_event.wait(interval)      # 比 sleep 好：收到信号立刻醒
         sampler["running"] = False
 
-    t = threading.Thread(target=_loop, daemon=True)
-    t.start()
+    t = threading.Thread(target=_loop, daemon=True)#创造采样副线程
+    t.start()#开始副线程
     sampler["thread"] = t
     return stop_event, sampler
 
@@ -252,10 +257,10 @@ def stop_fps_sampling(stop_event, sampler, timeout=5.0):
     join(timeout) 必须有：万一采样线程卡在原生截图里出不来，
     主线程不能跟着一起挂死，否则整条用例会一直卡住直到超时。
     """
-    stop_event.set()
+    stop_event.set()#举旗子
     t = sampler.get("thread")
     if t is not None:
-        t.join(timeout=timeout)
+        t.join(timeout=timeout)#等待采样线完全结束
         if t.is_alive():
             print(f"[FPS] 警告：采样线程在 {timeout}s 内未退出，已放弃等待")
     return sampler["shots"]
@@ -326,7 +331,7 @@ def peak_loudness_db(data, samplerate=48000, window_ms=50):
     if n == 0:
         return -100.0
     frames = mono[:n * win].reshape(n, win)
-    rms = np.sqrt(np.mean(frames ** 2, axis=1))
+    rms = np.sqrt(np.mean(frames ** 2, axis=1)) 
     return float(20 * np.log10(max(float(rms.max()), 1e-8)))
 
 
@@ -370,11 +375,22 @@ def assert_volume_trend(db_levels):
     print("\n[VOL] 音量-响度曲线:")
     for lv in sorted(db_levels, key=lambda x: int(x)):
         print(f"      音量 {lv:>2} -> {db_levels[lv]:7.1f} dBFS")
-
     if "0" in db_levels and "10" in db_levels:
         quiet, loud = db_levels["0"], db_levels["10"]
         gap = loud - quiet
         print(f"      动态范围(0->10): {gap:.1f} dB")
+        # 把实测数据挂进 allure 报告：曲线 + 各判据的阈值与实测值
+        curve = "\n".join(
+            f"  音量 {lv:>2} -> {db_levels[lv]:7.1f} dBFS"
+            for lv in sorted(db_levels, key=lambda x: int(x))
+        )
+        allure.attach(
+            f"音量-响度曲线:\n{curve}\n\n"
+            f"判据1 动态范围(0->10) ≥{config.VOLUME_MIN_DYNAMIC_RANGE_DB}dB : 实测 {gap:.1f}dB\n"
+            f"判据2 音量0 静音 ≤{config.VOLUME_SILENCE_DBFS}dBFS : 实测 {quiet:.1f}dBFS",
+            name="音量档位实测响度",
+            attachment_type=allure.attachment_type.TEXT,
+        )
         #验证滑动条是否有效
         assert gap >= config.VOLUME_MIN_DYNAMIC_RANGE_DB, (
             f"音量设置未有效影响实际输出: 音量0={quiet:.1f}dBFS, 音量10={loud:.1f}dBFS, "
@@ -390,3 +406,5 @@ def assert_volume_trend(db_levels):
         assert db_levels["0"] < mid < db_levels["10"], (
             f"响度未随音量单调变化: 0={db_levels['0']:.1f}, 5={mid:.1f}, 10={db_levels['10']:.1f} dBFS"
         )
+# ══════════════════════════════════════════════════════════════════════
+
