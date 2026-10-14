@@ -37,3 +37,4 @@ VOLUME_RECORD_SECONDS = 2.5          # 每次录多久（要覆盖平A那一下�
 VOLUME_SILENCE_DBFS = -55.0          # 音量0的静音判据，必须小于这个值。-80可能误报，某些游戏的音量滑条在 0 档仍允许有微弱底噪。-30抓不到BGM残留
 VOLUME_MIN_DYNAMIC_RANGE_DB = 25.0  # 最大值与最小值的差必须大于这个值。区分"完全失效"（0~2 dB）与"正常工作"（143 dB）
 BASELINE_VOLUME=10
+VOLUME_MEASURABLE_DBFS = -70.0
