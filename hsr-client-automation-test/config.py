@@ -38,3 +38,18 @@ VOLUME_SILENCE_DBFS = -55.0          # 音量0的静音判据，必须小于这�
 VOLUME_MIN_DYNAMIC_RANGE_DB = 25.0  # 最大值与最小值的差必须大于这个值。区分"完全失效"（0~2 dB）与"正常工作"（143 dB）
 BASELINE_VOLUME=10
 VOLUME_MEASURABLE_DBFS = -70.0
+# ── 开拓力读取配置 ──────────────────────────────────────────
+POWER_ANCHOR_TEMPLATE = "images/power_anchor.png"   # "当前持有："的模板图
+POWER_ANCHOR_THRESHOLD = 0.9                        # 锚点匹配置信度门槛
+
+POWER_CROP_WIDTH = 60        # 锚点右边缘向右裁剪的宽度（覆盖三位数，已实测）
+POWER_CROP_PAD = 3           # 裁剪区域上下留白
+POWER_SAT_MIN = 60           # 饱和度阈值：黄色数字高饱和，灰字/白底低饱和
+POWER_UPSCALE = 4            # OCR 前放大倍数
+
+POWER_MAX_DIGITS = 3         # 开拓力最多三位数
+POWER_MIN = 0
+POWER_MAX = 300              # 存储上限
+POWER_RECOVERY_TOLERANCE = 1 # 允许的恢复误差（6 分钟恢复 1 点）
+
+POWER_COST_PER_RUN = 10      #实际副本的开拓力消耗
