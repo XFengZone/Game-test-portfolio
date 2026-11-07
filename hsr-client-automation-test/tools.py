@@ -43,6 +43,7 @@ class WindowTools:
         sleep(duration)
         win.key_release(key)
         sleep(0.5)
+
     @staticmethod
     def enter_setting():
         """进入游戏设置菜单"""
@@ -51,6 +52,7 @@ class WindowTools:
         # 点击设置按钮，进入到设置界面
         touch(Template("images/setting_image.png", threshold=0.8))
         sleep(1.0)
+
     @staticmethod
     def return_from_setting_menu():
         """从游戏设置菜单中退出到游戏主界面"""
@@ -58,15 +60,27 @@ class WindowTools:
         sleep(1.0)
         WindowTools.press_and_hold("ESCAPE", 0)
         sleep(1.0)
+
     @staticmethod
     def enter_to_dungeon():
-        sleep(1.0)
-        touch(Template("images/enter_01.png"))
-        sleep(1.5)
+        """进入副本"""
         touch(Template("images/enter_02.png"))
         sleep(1.5)
         touch(Template("images/enter_03.png"))
-        sleep(3.0)
+
+    @staticmethod
+    def enter_to_tp_check():
+        """进入到开拓力数值校验界面"""
+        touch(Template("images/tp_menu.png", threshold=0.9))
+        wait(Template("images/tp_menu_check_01.png", threshold=0.9), timeout=5)
+        #封装函数，防止点击到后备开拓力
+        click_power_icon()
+        wait(Template("images/tp_menu_check_02.png", threshold=0.9), timeout=5)
+
+    @staticmethod
+    def return_dungeon_entrance():
+        """从开拓力校验界面返回副本进入界面"""
+        WindowTools.return_from_setting_menu()
 
     @staticmethod
     def set_volume(x_left: int, x_right: int, y: int, target_volume: int):
@@ -384,7 +398,7 @@ def assert_volume_trend(db_levels):
             f"  音量 {lv:>2} -> {db_levels[lv]:7.1f} dBFS"
             for lv in sorted(db_levels, key=lambda x: int(x))
         )
-        #系统音量检测
+        #检测系统音量
         assert loud > config.VOLUME_MEASURABLE_DBFS, (
             f"无法建立有效测量基线：音量10 档实测仅 {loud:.1f} dBFS，"
             f"低于可测量下限 {config.VOLUME_MEASURABLE_DBFS}dBFS。\n"
@@ -414,4 +428,177 @@ def assert_volume_trend(db_levels):
             f"响度未随音量单调变化: 0={db_levels['0']:.1f}, 5={mid:.1f}, 10={db_levels['10']:.1f} dBFS"
         )
 # ══════════════════════════════════════════════════════════════════════
+# 开拓力读取
+# ══════════════════════════════════════════════════════════════════════
 
+# OCR 常见的字符混淆：把字母纠正成数字。
+# 不纠正的话，"9O" 会被 isdigit() 过滤成 "9"，数值错了但测试不报错。
+_POWER_CHAR_FIX = {"O": "0", "o": "0", "D": "0",
+                   "I": "1", "l": "1", "|": "1"}
+
+
+def _clean_power_digits(raw):
+    """先纠正常见字符混淆，再过滤出数字"""
+    fixed = "".join(_POWER_CHAR_FIX.get(ch, ch) for ch in raw)
+    return "".join(ch for ch in fixed if ch.isdigit())
+
+
+def _extract_power_image(screen, debug=False):
+    """
+    以"当前持有："为锚点，裁出右侧数字区域，再按饱和度过滤出黄色数字。
+
+    为什么用锚点而不是固定坐标:
+      开拓力位数会变（1~3 位），固定坐标必然在某个位数上失效。
+      标签"当前持有："固定不变，用它定位会变的数字。
+
+    为什么用饱和度而不是亮度:
+      数字是黄色（高饱和），标签灰色、背景白色（都低饱和）。
+      亮度上分不开，饱和度上差异明显。
+    """
+    # 1) 匹配锚点
+    tpl = Template(config.POWER_ANCHOR_TEMPLATE,
+                   threshold=config.POWER_ANCHOR_THRESHOLD)
+    res = tpl._cv_match(screen)
+    if not res:
+        raise ValueError(
+            f"未找到开拓力锚点 {config.POWER_ANCHOR_TEMPLATE} — "
+            f"面板未打开 / 模板失效"
+        )
+
+    # 2) 从矩形取三个值
+    rect = res["rectangle"]
+    top_right = rect[3]          # (x2, y1)
+    bottom_right = rect[2]       # (x2, y2)
+
+    x_right = int(top_right[0])
+    y_top = int(top_right[1])
+    y_bottom = int(bottom_right[1])
+
+    # 3) 裁剪数字区域
+    x1 = x_right
+    x2 = min(screen.shape[1], x_right + config.POWER_CROP_WIDTH)
+    y1 = max(0, y_top - config.POWER_CROP_PAD)
+    y2 = min(screen.shape[0], y_bottom + config.POWER_CROP_PAD)
+
+    roi = screen[y1:y2, x1:x2]
+    if roi.size == 0:
+        raise ValueError(f"开拓力裁剪区域为空: x {x1}~{x2}, y {y1}~{y2}")
+
+    # 4) 饱和度过滤
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    s_channel = hsv[:, :, 1]
+    mask = s_channel > config.POWER_SAT_MIN
+
+    if int(mask.sum()) == 0:
+        raise ValueError(
+            f"开拓力区域没有高饱和像素(阈值{config.POWER_SAT_MIN}) — "
+            f"裁剪位置偏了 / 数字颜色变化"
+        )
+
+    out = np.zeros_like(roi)
+    out[mask] = roi[mask]
+
+    if debug:
+        print(f"[POWER调试] 锚点置信度 {res['confidence']:.3f}")
+        print(f"[POWER调试] 裁剪区域 x {x1}~{x2}, y {y1}~{y2}")
+        print(f"[POWER调试] 高饱和像素 {int(mask.sum())} 个, "
+              f"饱和度均值 {float(s_channel[mask].mean()):.0f}")
+        cv2.imwrite("power_crop_raw.png",
+                    cv2.resize(roi, None, fx=4, fy=4, interpolation=cv2.INTER_NEAREST))
+        cv2.imwrite("power_crop_filtered.png",
+                    cv2.resize(out, None, fx=4, fy=4, interpolation=cv2.INTER_NEAREST))
+
+    # 5) 放大
+    return cv2.resize(out, None,
+                      fx=config.POWER_UPSCALE, fy=config.POWER_UPSCALE,
+                      interpolation=cv2.INTER_CUBIC)
+
+
+def read_power(debug=False):
+    """
+    读一次当前开拓力，返回 int。
+    前置条件：开拓力面板已经打开。
+    """
+    image = _extract_power_image(G.DEVICE.snapshot(), debug=debug)
+    _, raw = _recognize(image)
+    digits = _clean_power_digits(raw)
+
+    if not digits:
+        raise ValueError(f"开拓力识别失败: OCR 原始输出={raw!r}")
+    if len(digits) > config.POWER_MAX_DIGITS:
+        raise ValueError(
+            f"开拓力位数异常: 读到 {digits!r}（最多 {config.POWER_MAX_DIGITS} 位）"
+        )
+
+    value = int(digits)
+    if not (config.POWER_MIN <= value <= config.POWER_MAX):
+        raise ValueError(
+            f"开拓力超出合理范围: {value}（应在 {config.POWER_MIN}~{config.POWER_MAX}）"
+        )
+    return value
+
+
+def read_power_stable(attempts=4, interval=0.3):
+    """
+    连读多次，要求连续两次结果一致才返回。
+    依据：开拓力每 6 分钟才恢复 1 点，0.3 秒内两次读数应完全相同。
+    """
+    last_error = None
+    prev = None
+
+    for _ in range(attempts):
+        try:
+            cur = read_power()
+        except ValueError as e:
+            last_error = e
+            sleep(interval)
+            continue
+
+        if prev is not None and cur == prev:
+            return cur
+        prev = cur
+        sleep(interval)
+
+    raise ValueError(f"开拓力连续读取不稳定，最后一次错误: {last_error}")
+
+def find_power_icon(screen, threshold=0.85):
+    """
+    在主界面找到【主开拓力】图标，返回匹配结果字典。
+
+    为什么不能直接用 touch(Template("images/tp.png")):
+      主开拓力和后备开拓力的图标结构完全相同（同款银环 + 同款星形），
+      灰度模板匹配对两者的置信度都在 0.98 左右，会随机命中左边那个。
+      两者唯一稳定可区分的特征是【位置】—— 主开拓力在右侧。
+
+    参数:
+      screen    : G.DEVICE.snapshot() 得到的画面
+      threshold : 匹配阈值，默认 0.85
+
+    返回:
+      dict，含 'result'(x,y) / 'rectangle' / 'confidence'
+
+    异常:
+      找不到任何匹配时抛 ValueError
+    """
+    tpl = Template("images/tp.png", threshold=threshold)
+    results = tpl.match_all_in(screen)
+
+    if not results:
+        raise ValueError(f"未找到开拓力图标（阈值 {threshold}）")
+
+    # 按 x 排序，主开拓力在最右侧
+    results.sort(key=lambda r: r["result"][0])
+    best = results[-1]
+
+    print(f"[POWER] 匹配到 {len(results)} 个图标，"
+          f"选最右: {best['result']} （置信度 {best['confidence']:.3f}）")
+    return best
+
+
+def click_power_icon():
+    """
+    点击主界面右上角的主开拓力图标，打开开拓力面板。
+    """
+    screen = G.DEVICE.snapshot()
+    best = find_power_icon(screen)
+    touch(best["result"])
