@@ -65,7 +65,15 @@ def reset_game_state():
     except Exception as e:
         # teardown 里绝不抛异常，否则会盖掉用例本身的失败信息
         print(f"[conftest] 基线复位失败: {type(e).__name__}: {e}")
+@pytest.fixture(scope="function")
+def tp_return():
+    """从挑战完成界面返回到游戏主界面"""
 
+    yield
+    touch(Template("images/exit_stage.png",threshold=0.9))
+    wait(Template("images/enter_02.png",threshold=0.9),timeout=10)
+    sleep(1.0)
+    tools.WindowTools.press_and_hold("ESCAPE",0)
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield
